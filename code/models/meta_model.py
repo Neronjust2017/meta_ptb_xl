@@ -216,11 +216,11 @@ class MetaModel(ClassificationModel):
 
         # training
 
-        pynvml.nvmlInit()
-        handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 0表示第一块显卡
-        meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        # pynvml.nvmlInit()
+        # handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 0表示第一块显卡
+        # meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
 
-        train_loss_squence = np.load('/home/weiyuhua/ecg_ptbxl/output/baseline_inception1d_super_NCAR/models/your_inception1d/loss_squence.npy')
+        train_loss_squence = np.load(str(self.outputfolder).replace('meta', 'baseline', 1).replace('meta', 'your') + '/loss_squence.npy')
         # epochs, n, 71
         train_loss_squence = np.transpose(train_loss_squence, (1,2,0))
         train_loss_squence = torch.from_numpy(train_loss_squence)

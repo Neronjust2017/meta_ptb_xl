@@ -6,6 +6,8 @@ import numpy as np
 import multiprocessing
 from itertools import repeat
 
+np.random.seed(202002)
+
 class SCP_Experiment():
     '''
         Experiment on SCP-ECG statements. All experiments based on SCP are performed and evaluated the same way.
@@ -13,12 +15,10 @@ class SCP_Experiment():
 
     def __init__(self, experiment_name, task, datafolder, outputfolder, models, sampling_frequency=100, min_samples=0, train_fold=8, val_fold=9, test_fold=10, folds_type='strat',
                  # for label noise
-                 seed=0,
                  noise_type='NCAR',
                  noise_ratio=0.1
 
                  ):
-        self.seed = seed
         self.noise_type = noise_type
         self.noise_ratio = noise_ratio
 
@@ -81,7 +81,6 @@ class SCP_Experiment():
 
         # corrupt labels
         if self.noise_type == 'NCAR':
-            np.random.seed(self.seed)
             self.y_train_noisy = np.zeros(shape=self.y_train.shape)
             for i in range(self.y_train.shape[0]):
                 for j in range(self.y_train.shape[1]):
