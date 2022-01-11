@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from models.timeseries_utils import *
 
 from pathlib import Path
@@ -27,6 +28,8 @@ from utils.utils import apply_thresholds, challenge_metrics, roc_auc_score
 
 #eval for early stopping
 from utils.utils import evaluate_experiment
+
+import wandb
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -186,18 +189,20 @@ class YourModel(ClassificationModel):
         self.aggregate_fn = aggregate_fn
         self.concat_train_val = concat_train_val
 
-    def fit(self, X_train, y_train, X_val, y_val):
+    def fit(self, X_train, y_train, X_val, y_val, X_test, y_test):
         # convert everything to float32
         X_train = [l.astype(np.float32) for l in X_train]
         X_val = [l.astype(np.float32) for l in X_val]
+        X_test = [l.astype(np.float32) for l in X_test]
         y_train = [l.astype(np.float32) for l in y_train]
         y_val = [l.astype(np.float32) for l in y_val]
+        y_test = [l.astype(np.float32) for l in y_test]
 
         if (self.concat_train_val):
             X_train += X_val
             y_train += y_val
 
-        data_loader_train, data_loader_valid, loss_fn, model = self._get_learner(X_train, y_train, X_val, y_val)
+        data_loader_train, data_loader_valid, data_loader_test, loss_fn, model = self._get_learner(X_train, y_train, X_val, y_val, X_test, y_test)
         optimizer = Adam(model.parameters(), lr=self.lr)
         # lr_scheduler = StepLR(optimizer, step_size=int(self.epochs*0.8), gamma=0.1)
         # lr_scheduler = StepLR(optimizer, step_size=int(self.epochs*0.8), gamma=0.1)
@@ -230,6 +235,7 @@ class YourModel(ClassificationModel):
             # validation
             train_loss = 0
             valid_loss = 0
+            test_loss = 0
 
             with torch.no_grad():
 
@@ -258,6 +264,7 @@ class YourModel(ClassificationModel):
 
                 valid_target = []
                 valid_pred = []
+
                 for batch_idx, (data, target, _) in enumerate(data_loader_valid):
                     data, target = data.to(device), target.to(device)
                     output = model(data)
@@ -275,11 +282,38 @@ class YourModel(ClassificationModel):
                 valid_pred = np.concatenate(valid_pred, axis=0)
                 valid_metric = evaluate_experiment(valid_target, valid_pred, thresholds=None)
 
-                print('Train Epoch: {} Train Loss: {:.6f} Valid Loss: {:.6f} Train Metric: {:.6f} Valid Metric: {:.6f}'.format(epoch,
-                                                                                                    train_loss / len(data_loader_train),
-                                                                                                    valid_loss / len(data_loader_valid),
-                                                                                                    train_metric['macro_auc'],
-                                                                                                    valid_metric['macro_auc']))
+                test_target = []
+                test_pred = []
+
+                for batch_idx, (data, target, _) in enumerate(data_loader_test):
+                    data, target = data.to(device), target.to(device)
+                    output = model(data)
+
+                    if (self.loss == "binary_cross_entropy"):
+                        output = nn.Sigmoid()(output)
+
+                    loss = loss_fn(output, target)
+                    test_loss += loss.detach().cpu()
+
+                    test_target.append(target.detach().cpu())
+                    test_pred.append(output.detach().cpu())
+
+                test_target = np.concatenate(test_target, axis=0)
+                test_pred = np.concatenate(test_pred, axis=0)
+                test_metric = evaluate_experiment(test_target, test_pred, thresholds=None)
+
+                print('Train Epoch: {} Train Loss: {:.6f} Valid Loss: {:.6f} Test Loss: {:.6f} Train Metric: {:.6f} Valid Metric: {:.6f} Test Metric: {:.6f}'.
+                      format(epoch, train_loss / len(data_loader_train), valid_loss / len(data_loader_valid), test_loss / len(data_loader_test),
+                             train_metric['macro_auc'], valid_metric['macro_auc'], test_metric['macro_auc']))
+
+                wandb.log({"train loss": train_loss / len(data_loader_train)})
+                wandb.log({"valid loss": valid_loss / len(data_loader_valid)})
+                wandb.log({"test loss": test_loss / len(data_loader_test)})
+
+                wandb.log({"train metric": train_metric['macro_auc']})
+                wandb.log({"valid metric": valid_metric['macro_auc']})
+                wandb.log({"test metric": test_metric['macro_auc']})
+
 
             # save loss sequence
             np.save(os.path.join(self.outputfolder, 'loss_squence.npy'), train_loss_squence)
@@ -295,7 +329,7 @@ class YourModel(ClassificationModel):
         Y = [l.astype(np.float32) for l in Y]
         # y_dummy = [np.ones(self.num_classes, dtype=np.float32) for _ in range(len(X))]
 
-        data_loader, data_loader_tmp, loss_fn, model = self._get_learner(X, Y, X, Y)
+        data_loader, _, _, loss_fn, model = self._get_learner(X, Y, X, Y, X, Y)
 
         # print(model.parameters())
 
@@ -337,11 +371,12 @@ class YourModel(ClassificationModel):
         # return aggregate_predictions(preds, idmap=idmap,
         #                              aggregate_fn=np.mean if self.aggregate_fn == "mean" else np.amax)
 
-    def _get_learner(self, X_train,y_train, X_val, y_val, num_classes=None):
+    def _get_learner(self, X_train,y_train, X_val, y_val, X_test, y_test, num_classes=None):
 
 
         df_train = pd.DataFrame({"data": range(len(X_train)), "label": y_train})
         df_valid = pd.DataFrame({"data": range(len(X_val)), "label": y_val})
+        df_test = pd.DataFrame({"data": range(len(X_test)), "label": y_test})
 
         # timeseries.ToTensor()
         tfms_ptb_xl = [ToTensor()]
@@ -355,10 +390,15 @@ class YourModel(ClassificationModel):
                                           chunk_length=self.chunk_length_valid if self.chunkify_valid else 0,
                                           min_chunk_length=self.min_chunk_length, stride=self.stride_length_valid,
                                           transforms=tfms_ptb_xl, annotation=False, col_lbl="label", npy_data=X_val)
+        ds_test = TimeseriesDatasetCrops(df_test, self.input_size, num_classes=self.num_classes,
+                                          chunk_length=self.chunk_length_valid if self.chunkify_valid else 0,
+                                          min_chunk_length=self.min_chunk_length, stride=self.stride_length_valid,
+                                          transforms=tfms_ptb_xl, annotation=False, col_lbl="label", npy_data=X_test)
 
         # data loader
         data_loader_train = DataLoader(ds_train, batch_size=self.bs, shuffle=True, pin_memory=True, num_workers=32)
         data_loader_valid = DataLoader(ds_valid, batch_size=self.bs, shuffle=False, pin_memory=True, num_workers=32)
+        data_loader_test = DataLoader(ds_test, batch_size=self.bs, shuffle=False, pin_memory=True, num_workers=32)
 
         # loss
         if (self.loss == "binary_cross_entropy"):
@@ -392,7 +432,7 @@ class YourModel(ClassificationModel):
             print("Model not found.")
             assert (True)
 
-        return data_loader_train, data_loader_valid, loss, model
+        return data_loader_train, data_loader_valid, data_loader_test, loss, model
 
 
 

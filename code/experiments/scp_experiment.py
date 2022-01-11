@@ -142,23 +142,35 @@ class SCP_Experiment():
             if modeltype == 'WAVELET':
                 from models.wavelet import WaveletModel
                 model = WaveletModel(modelname, n_classes, self.sampling_frequency, mpath, self.input_shape, **modelparams)
+
             elif modeltype == "fastai_model":
                 from models.fastai_model import fastai_model
                 model = fastai_model(modelname, n_classes, self.sampling_frequency, mpath, self.input_shape, **modelparams)
+
             elif modeltype == "your_model":
                 # YOUR MODEL GOES HERE!
                 from models.your_model import YourModel
                 model = YourModel(modelname, n_classes, self.sampling_frequency, mpath, self.input_shape, **modelparams)
+                model.noise_type = self.noise_type
+                model.noise_ratio = self.noise_ratio
+
             elif modeltype == "meta_model":
                 from models.meta_model import MetaModel
                 model = MetaModel(modelname, n_classes, self.sampling_frequency, mpath, self.input_shape, **modelparams)
+                model.noise_type = self.noise_type
+                model.noise_ratio = self.noise_ratio
+
+            elif modeltype == "finetune_model":
+                from models.finetune_model import FinetuneModel
+                model = FinetuneModel(modelname, n_classes, self.sampling_frequency, mpath, self.input_shape, **modelparams)
+
             else:
                 assert(True)
                 break
 
             # fit model
             y_train = np.hstack((self.y_train_noisy, self.y_train))
-            model.fit(self.X_train, y_train, self.X_val, self.y_val)
+            model.fit(self.X_train, y_train, self.X_val, self.y_val, self.X_test, self.y_test)
 
             # predict
             train_noisy_metric = model.predict(self.X_train, self.y_train_noisy)
@@ -316,3 +328,4 @@ class SCP_Experiment():
             #tr_df_result.to_csv(rpath+'tr_results.csv')
             #val_df_result.to_csv(rpath+'val_results.csv')
             te_df_result.to_csv(rpath+'te_results.csv')
+
